@@ -40,7 +40,9 @@ app.add_middleware(
 )
 
 # Import and register routes
-from app.api.routes import search, products, history, analysis, chat, offers  # noqa: E402
+from app.api.routes import (  # noqa: E402
+    search, products, history, analysis, chat, offers, quickcommerce,
+)
 
 app.include_router(search.router, prefix="/api/v1", tags=["search"])
 app.include_router(products.router, prefix="/api/v1", tags=["products"])
@@ -48,6 +50,9 @@ app.include_router(history.router, prefix="/api/v1", tags=["history"])
 app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(offers.router, prefix="/api/v1", tags=["offers"])
+app.include_router(
+    quickcommerce.router, prefix="/api/v1", tags=["quickcommerce"]
+)
 
 
 @app.get("/health", tags=["health"])

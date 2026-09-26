@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # ReefAPI (Flipkart + 293 other APIs — 1,000 free credits)
     reefapi_key: str = ""
 
+    # QuickCommerceAPI (Blinkit, Zepto, Swiggy Instamart, BigBasket Now)
+    quickcommerce_api_key: str = ""
+    # Default delivery location — Bangalore Koramangala; override per request
+    quickcommerce_default_lat: float = 12.9352
+    quickcommerce_default_lon: float = 77.6245
+
     # RapidAPI (Amazon product data — free tier available)
     rapidapi_key: str = ""
     # Host depends on which RapidAPI Amazon service you subscribed to.
