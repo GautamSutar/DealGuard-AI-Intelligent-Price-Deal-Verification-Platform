@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     flipkart_provider: str = "mock"
     flipkart_api_key: str = ""
 
+    # ReefAPI (Flipkart + 293 other APIs — 1,000 free credits)
+    reefapi_key: str = ""
+
     # RapidAPI (Amazon product data — free tier available)
     rapidapi_key: str = ""
     # Host depends on which RapidAPI Amazon service you subscribed to.
