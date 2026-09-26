@@ -16,7 +16,13 @@ class AgentSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    messages: Mapped[list["AgentMessage"]] = relationship("AgentMessage", back_populates="session", order_by="AgentMessage.created_at")
+    messages: Mapped[list["AgentMessage"]] = relationship(
+        "AgentMessage",
+        back_populates="session",
+        order_by="AgentMessage.created_at",
+        primaryjoin="AgentSession.session_id == AgentMessage.session_id",
+        foreign_keys="[AgentMessage.session_id]",
+    )
 
 
 class AgentMessage(Base):

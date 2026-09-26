@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,7 +36,7 @@ class ProductVariant(Base):
     __tablename__ = "product_variants"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False)
     variant_name: Mapped[str] = mapped_column(String(255), nullable=False)
     storage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ram: Mapped[str | None] = mapped_column(String(50), nullable=True)

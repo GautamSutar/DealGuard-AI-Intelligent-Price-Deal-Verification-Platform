@@ -58,10 +58,6 @@ async def search_products(
         if p is None:
             continue
         listing = await _get_or_create_listing(db, p)
-        current_history = None
-        if listing.price_histories:
-            latest = max(listing.price_histories, key=lambda h: h.observed_at)
-            current_history = latest
 
         results.append(
             ProductSearchResult(
