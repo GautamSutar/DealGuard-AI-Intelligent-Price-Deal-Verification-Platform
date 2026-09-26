@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     flipkart_provider: str = "mock"
     flipkart_api_key: str = ""
 
+    # RapidAPI (Amazon product data — free tier available)
+    rapidapi_key: str = ""
+    # Host depends on which RapidAPI Amazon service you subscribed to.
+    # Common options:
+    #   real-time-amazon-data.p.rapidapi.com
+    #   amazon-product-data6.p.rapidapi.com
+    #   axesso-amazon-data-service.p.rapidapi.com
+    rapidapi_amazon_host: str = "real-time-amazon-data.p.rapidapi.com"
+    rapidapi_amazon_country: str = "IN"
+
     # Price collection
     price_collection_interval_hours: int = 6
     price_cache_ttl_seconds: int = 900

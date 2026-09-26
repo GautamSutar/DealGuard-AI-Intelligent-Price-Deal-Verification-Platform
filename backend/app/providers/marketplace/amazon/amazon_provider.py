@@ -11,8 +11,6 @@ get_amazon_provider().
 
 from __future__ import annotations
 
-import random
-from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import structlog
@@ -118,8 +116,18 @@ class AmazonMockProvider(MarketplaceProvider):
 
 def get_amazon_provider() -> MarketplaceProvider:
     provider_name = settings.amazon_provider.lower()
+
+    if provider_name == "rapidapi":
+        if not settings.rapidapi_key:
+            logger.warning("RAPIDAPI_KEY is not set — falling back to mock provider")
+            return AmazonMockProvider()
+        from app.providers.marketplace.amazon.rapidapi_provider import RapidAPIAmazonProvider
+        logger.info("Using RapidAPI Amazon provider", host=settings.rapidapi_amazon_host)
+        return RapidAPIAmazonProvider()
+
     if provider_name == "mock":
         return AmazonMockProvider()
+
     # Future: elif provider_name == "keepa": return AmazonKeepaProvider()
     logger.warning("Unknown AMAZON_PROVIDER, falling back to mock", provider=provider_name)
     return AmazonMockProvider()
