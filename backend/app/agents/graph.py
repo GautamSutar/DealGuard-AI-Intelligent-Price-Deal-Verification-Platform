@@ -60,9 +60,19 @@ async def run_agent(
         )
 
         if "error" in response:
+            err = str(response["error"])
+            if "permission-denied" in err or "credits" in err or "license" in err:
+                user_msg = (
+                    "The AI service is not available — the xAI/Grok account has no credits. "
+                    "To fix this: either add credits at console.x.ai, or set LLM_PROVIDER=groq "
+                    "with a free GROQ_API_KEY from console.groq.com in backend/.env."
+                )
+            else:
+                user_msg = "I encountered an error communicating with the AI service. Please try again."
+            logger.error("LLM error in agent", error=err)
             return ChatResponse(
                 session_id=session_id,
-                message="I encountered an error communicating with the AI service. Please try again.",
+                message=user_msg,
                 sources=[],
             )
 
