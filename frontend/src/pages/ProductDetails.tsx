@@ -73,7 +73,7 @@ export default function ProductDetails() {
           <div className="space-y-4">
             {analysis && <AnalysisSummary analysis={analysis} />}
             <Link
-              to={`/chat?listing_id=${listingId}`}
+              to={`/chat?listing_id=${listingId}&title=${encodeURIComponent(analysis?.title ?? '')}`}
               className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition-colors"
             >
               <MessageSquare size={18} />

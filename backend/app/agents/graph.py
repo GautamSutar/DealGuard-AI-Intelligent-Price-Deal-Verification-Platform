@@ -46,6 +46,17 @@ async def run_agent(
     llm = get_llm_provider()
     system_prompt = get_system_prompt()
     messages = list(conversation_history)
+
+    # When a listing_id is provided, prepend it so the LLM can call tools directly
+    # without needing to search first.
+    if product_id and not conversation_history:
+        context_hint = (
+            f"[Context] The user is viewing listing_id={product_id}. "
+            "Use this listing_id directly with get_price_analysis and get_current_offers tools."
+        )
+        messages.append({"role": "user", "content": context_hint})
+        messages.append({"role": "assistant", "content": f"Understood. I will analyse listing {product_id} directly."})
+
     messages.append({"role": "user", "content": user_message})
 
     tool_calls_made: List[str] = []
