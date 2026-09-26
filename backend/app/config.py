@@ -22,8 +22,15 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
 
     # AI / LLM
+    # Provider: 'grok' (xAI) or 'groq' (Groq inference)
+    llm_provider: str = "grok"
+
+    # Grok / xAI  (https://x.ai)
+    grok_api_key: str = ""
+    grok_model: str = "grok-3"
+
+    # Groq inference (fallback / alternative)
     groq_api_key: str = ""
-    llm_provider: str = "groq"
     llm_model: str = "llama-3.3-70b-versatile"
 
     # Marketplace providers

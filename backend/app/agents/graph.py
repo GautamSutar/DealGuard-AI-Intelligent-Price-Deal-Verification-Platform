@@ -22,7 +22,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.tools import TOOL_DEFINITIONS, execute_tool
-from app.providers.llm.groq.groq_provider import SYSTEM_PROMPT, get_groq_provider
+from app.providers.llm.factory import get_llm_provider, get_system_prompt
 from app.schemas.chat import ChatResponse, ChatSource
 
 logger = structlog.get_logger(__name__)
@@ -43,7 +43,8 @@ async def run_agent(
     Returns a ChatResponse with the LLM explanation and the structured
     data that was used to generate it.
     """
-    llm = get_groq_provider()
+    llm = get_llm_provider()
+    system_prompt = get_system_prompt()
     messages = list(conversation_history)
     messages.append({"role": "user", "content": user_message})
 
@@ -55,7 +56,7 @@ async def run_agent(
         response = await llm.chat_with_tools(
             messages=messages,
             tools=TOOL_DEFINITIONS,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
         )
 
         if "error" in response:
