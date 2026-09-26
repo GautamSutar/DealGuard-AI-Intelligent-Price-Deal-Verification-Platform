@@ -106,7 +106,13 @@ async def execute_tool(
             listing_id = UUID(tool_args["listing_id"])
             days = tool_args.get("days", 365)
             points = await get_price_history(db, listing_id, days)
-            return json.dumps([p.model_dump() for p in points])
+            # Return compact summary: first 5 + last 25 points to stay within token limits
+            sample = points[:5] + points[-25:] if len(points) > 30 else points
+            return json.dumps({
+                "total_points": len(points),
+                "days_requested": days,
+                "sample_points": [p.model_dump() for p in sample],
+            })
 
         elif tool_name == "get_price_analysis":
             listing_id = UUID(tool_args["listing_id"])
