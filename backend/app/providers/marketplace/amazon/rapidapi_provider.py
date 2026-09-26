@@ -146,27 +146,58 @@ class RealTimeAmazonProvider(MarketplaceProvider):
 
     # ── HTTP helper ──────────────────────────────────────────────────────────
 
-    async def _get(self, path: str, params: dict) -> Optional[dict]:
+    async def _get(
+        self, path: str, params: dict, _retries: int = 2
+    ) -> Optional[dict]:
         url = f"{self.BASE_URL}{path}"
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(url, headers=self._headers, params=params)
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "RapidAPI HTTP error",
-                status=exc.response.status_code,
-                endpoint=path,
-                body=exc.response.text[:200],
-            )
-            return None
-        except httpx.TimeoutException:
-            logger.error("RapidAPI timeout", endpoint=path)
-            return None
-        except Exception as exc:
-            logger.error("RapidAPI request failed", error=str(exc), endpoint=path)
-            return None
+        for attempt in range(_retries + 1):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout
+                ) as client:
+                    resp = await client.get(
+                        url, headers=self._headers, params=params
+                    )
+                    # 503 from RapidAPI = temporary overload — retry
+                    if resp.status_code == 503 and attempt < _retries:
+                        logger.warning(
+                            "RapidAPI 503, retrying",
+                            attempt=attempt + 1,
+                            endpoint=path,
+                        )
+                        import asyncio
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                        continue
+                    resp.raise_for_status()
+                    body = resp.json()
+                    # API-level error in response body
+                    if isinstance(body, dict) and body.get("status") == "ERROR":
+                        logger.warning(
+                            "RapidAPI error response",
+                            endpoint=path,
+                            error=body.get("error", {}).get("message"),
+                        )
+                        return None
+                    return body
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "RapidAPI HTTP error",
+                    status=exc.response.status_code,
+                    endpoint=path,
+                    body=exc.response.text[:200],
+                )
+                return None
+            except httpx.TimeoutException:
+                logger.error("RapidAPI timeout", endpoint=path)
+                return None
+            except Exception as exc:
+                logger.error(
+                    "RapidAPI request failed",
+                    error=str(exc),
+                    endpoint=path,
+                )
+                return None
+        return None
 
     # ── Response parsers ─────────────────────────────────────────────────────
 
