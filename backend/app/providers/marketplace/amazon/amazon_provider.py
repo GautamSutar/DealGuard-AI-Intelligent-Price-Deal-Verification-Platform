@@ -121,9 +121,14 @@ def get_amazon_provider() -> MarketplaceProvider:
         if not settings.rapidapi_key:
             logger.warning("RAPIDAPI_KEY is not set — falling back to mock provider")
             return AmazonMockProvider()
-        from app.providers.marketplace.amazon.rapidapi_provider import RapidAPIAmazonProvider
-        logger.info("Using RapidAPI Amazon provider", host=settings.rapidapi_amazon_host)
-        return RapidAPIAmazonProvider()
+        from app.providers.marketplace.amazon.rapidapi_provider import (
+            RealTimeAmazonProvider,
+        )
+        logger.info(
+            "Using RealTime Amazon provider",
+            host=settings.rapidapi_amazon_host,
+        )
+        return RealTimeAmazonProvider()
 
     if provider_name == "mock":
         return AmazonMockProvider()

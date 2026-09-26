@@ -1,14 +1,18 @@
 """
-RapidAPI Amazon provider — real live data, no scraping.
+Real-Time Amazon Data provider via RapidAPI.
 
-Supports the following RapidAPI Amazon data services (same endpoint structure):
-  - Real-Time Amazon Data   : real-time-amazon-data.p.rapidapi.com
-  - Amazon Product Data     : amazon-product-data6.p.rapidapi.com
-  - Axesso Amazon           : axesso-amazon-data-service.p.rapidapi.com
+Host   : real-time-amazon-data.p.rapidapi.com
+Docs   : https://rapidapi.com/real-time-amazon-data/api/real-time-amazon-data
+
+Endpoints used:
+  GET /search           — Product Search
+  GET /product-details  — Product Details  (asin + country)
+  GET /product-offers   — Product Offers   (asin + country)
+  GET /url-product      — Scrape By URL    (url)
 
 Configure via environment:
   AMAZON_PROVIDER=rapidapi
-  RAPIDAPI_KEY=520c1b436d836db9f48821e9dc0a2b0d
+  RAPIDAPI_KEY=<your key>
   RAPIDAPI_AMAZON_HOST=real-time-amazon-data.p.rapidapi.com
   RAPIDAPI_AMAZON_COUNTRY=IN
 """
@@ -23,28 +27,28 @@ import httpx
 import structlog
 
 from app.config import settings
-from app.providers.marketplace.amazon.amazon_parser import parse_asin_from_url
 from app.providers.marketplace.base import MarketplaceProvider, ProviderOffer, ProviderProduct
 
 logger = structlog.get_logger(__name__)
 
 
-class RapidAPIAmazonProvider(MarketplaceProvider):
+class RealTimeAmazonProvider(MarketplaceProvider):
     """
-    Calls the RapidAPI Amazon product data service.
-    All data comes from RapidAPI — never fabricated.
+    Production provider backed by real-time-amazon-data.p.rapidapi.com.
+    Returns live Amazon IN data — no mock, no fabrication.
     """
+
+    BASE_URL = "https://real-time-amazon-data.p.rapidapi.com"
 
     def __init__(self):
         self._key = settings.rapidapi_key
         self._host = settings.rapidapi_amazon_host
         self._country = settings.rapidapi_amazon_country
-        self._base_url = f"https://{self._host}"
         self._headers = {
             "X-RapidAPI-Key": self._key,
             "X-RapidAPI-Host": self._host,
         }
-        self._timeout = httpx.Timeout(15.0)
+        self._timeout = httpx.Timeout(20.0)
 
     @property
     def marketplace_name(self) -> str:
@@ -53,151 +57,190 @@ class RapidAPIAmazonProvider(MarketplaceProvider):
     # ── Public interface ─────────────────────────────────────────────────────
 
     async def search_products(self, query: str, limit: int = 10) -> List[ProviderProduct]:
-        logger.info("RapidAPI Amazon: search", query=query)
-        data = await self._get("/search", params={
+        """
+        GET /search
+        Params: query, country, page, sort_by
+        Response: data.products[]
+        """
+        logger.info("RealTimeAmazon: search", query=query, country=self._country)
+        raw = await self._get("/search", {
             "query": query,
             "country": self._country,
-            "category_id": "aps",
             "page": "1",
+            "sort_by": "RELEVANCE",
         })
-        if not data:
+        if not raw or raw.get("status") != "OK":
+            logger.warning("Search returned no OK status", response=raw)
             return []
-        return self._parse_search_results(data, limit)
+
+        items = raw.get("data", {}).get("products", [])
+        products = []
+        for item in items[:limit]:
+            p = self._parse_search_item(item)
+            if p:
+                products.append(p)
+        logger.info("Search complete", results=len(products))
+        return products
 
     async def get_product(self, external_id: str) -> Optional[ProviderProduct]:
-        logger.info("RapidAPI Amazon: get product", asin=external_id)
-        data = await self._get("/product-details", params={
+        """
+        GET /product-details
+        Params: asin, country, autoselect_variant=true
+        Response: data (single product object)
+        """
+        logger.info("RealTimeAmazon: product details", asin=external_id)
+        raw = await self._get("/product-details", {
             "asin": external_id,
             "country": self._country,
+            "autoselect_variant": "true",
         })
-        if not data:
+        if not raw or raw.get("status") != "OK":
+            logger.warning("Product details returned no data", asin=external_id)
             return None
-        return self._parse_product_details(data)
+
+        data = raw.get("data", {})
+        return self._parse_product_detail(data, external_id)
 
     async def get_current_offers(self, external_id: str) -> List[ProviderOffer]:
-        logger.info("RapidAPI Amazon: get offers", asin=external_id)
-        data = await self._get("/product-offers", params={
+        """
+        GET /product-offers
+        Params: asin, country, limit
+        Response: data.offers[]
+        Each offer has price_info and seller_info.
+        """
+        logger.info("RealTimeAmazon: product offers", asin=external_id)
+        raw = await self._get("/product-offers", {
             "asin": external_id,
             "country": self._country,
             "limit": "5",
         })
-        if not data:
+        if not raw or raw.get("status") != "OK":
             return []
-        return self._parse_offers(data)
+
+        offers_raw = raw.get("data", {}).get("offers", [])
+        return self._parse_offers(offers_raw)
 
     async def get_product_from_url(self, url: str) -> Optional[ProviderProduct]:
-        asin = parse_asin_from_url(url)
+        """
+        GET /url-product (Scrape By URL endpoint)
+        Falls back to ASIN extraction if URL parsing fails.
+        """
+        logger.info("RealTimeAmazon: scrape by URL", url=url)
+        raw = await self._get("/url-product", {
+            "url": url,
+            "country": self._country,
+        })
+        if raw and raw.get("status") == "OK":
+            data = raw.get("data", {})
+            asin = data.get("asin")
+            if asin:
+                return self._parse_product_detail(data, asin)
+
+        # Fallback: extract ASIN from URL and call product-details
+        asin = _extract_asin_from_url(url)
         if asin:
             return await self.get_product(asin)
+
+        logger.warning("Could not resolve product from URL", url=url)
         return None
 
-    # ── HTTP helpers ─────────────────────────────────────────────────────────
+    # ── HTTP helper ──────────────────────────────────────────────────────────
 
     async def _get(self, path: str, params: dict) -> Optional[dict]:
-        url = f"{self._base_url}{path}"
+        url = f"{self.BASE_URL}{path}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(url, headers=self._headers, params=params)
                 resp.raise_for_status()
                 return resp.json()
         except httpx.HTTPStatusError as exc:
-            logger.error("RapidAPI HTTP error", status=exc.response.status_code, url=url)
+            logger.error(
+                "RapidAPI HTTP error",
+                status=exc.response.status_code,
+                endpoint=path,
+                body=exc.response.text[:200],
+            )
+            return None
+        except httpx.TimeoutException:
+            logger.error("RapidAPI timeout", endpoint=path)
             return None
         except Exception as exc:
-            logger.error("RapidAPI request failed", error=str(exc), url=url)
+            logger.error("RapidAPI request failed", error=str(exc), endpoint=path)
             return None
 
     # ── Response parsers ─────────────────────────────────────────────────────
 
-    def _parse_search_results(self, data: dict, limit: int) -> List[ProviderProduct]:
-        products = []
-        # Real-Time Amazon Data returns data.products or data.data.products
-        items = (
-            data.get("products")
-            or data.get("data", {}).get("products")
-            or data.get("searchResult", {}).get("products")
-            or []
-        )
-        for item in items[:limit]:
-            p = self._item_to_provider_product(item)
-            if p:
-                products.append(p)
-        return products
-
-    def _parse_product_details(self, data: dict) -> Optional[ProviderProduct]:
-        # Unwrap common wrapper keys
-        item = (
-            data.get("data")
-            or data.get("product")
-            or data.get("productDetails")
-            or data
-        )
-        return self._item_to_provider_product(item)
-
-    def _item_to_provider_product(self, item: dict) -> Optional[ProviderProduct]:
+    def _parse_search_item(self, item: dict) -> Optional[ProviderProduct]:
         """
-        Maps a raw RapidAPI item dict to ProviderProduct.
-
-        Different RapidAPI Amazon services use slightly different field names,
-        so we probe multiple keys to stay compatible.
+        Search result item fields (real-time-amazon-data search response):
+          asin, product_title, product_price, product_original_price,
+          currency, product_url, product_photo, is_best_seller,
+          product_minimum_offer_price, is_prime, sales_volume
         """
-        asin = (
-            item.get("asin")
-            or item.get("product_id")
-            or item.get("ASIN")
-        )
+        asin = item.get("asin")
         if not asin:
             return None
 
-        title = (
-            item.get("product_title")
-            or item.get("title")
-            or item.get("name")
-            or "Unknown Product"
+        title = item.get("product_title", "Unknown Product")
+        selling_price = _parse_price(item.get("product_price"))
+        mrp = _parse_price(item.get("product_original_price"))
+        image = item.get("product_photo")
+        url = item.get("product_url") or f"https://www.amazon.in/dp/{asin}"
+        availability = "out" not in str(item.get("product_availability", "")).lower()
+
+        # minimum_offer_price is sometimes the effective after-coupon price
+        min_offer = _parse_price(item.get("product_minimum_offer_price"))
+        effective = min_offer if (min_offer and selling_price and min_offer < selling_price) \
+            else selling_price
+
+        return ProviderProduct(
+            marketplace="amazon",
+            external_id=asin,
+            title=title,
+            url=url,
+            brand=None,  # not in search results; fetched on product-details
+            image_url=image,
+            mrp=mrp,
+            selling_price=selling_price,
+            effective_price=effective,
+            currency="INR",
+            availability=availability,
+            offers=[],
+            observed_at=datetime.now(timezone.utc),
+            source="real-time-amazon-data/search",
+            confidence=1.0,
         )
 
-        # Price — try several common field names (all in INR for IN country)
-        selling_price = _extract_price(
-            item.get("product_price")
-            or item.get("price")
-            or item.get("currentPrice")
-            or item.get("buybox_winner", {}).get("price", {}).get("value")
+    def _parse_product_detail(self, data: dict, asin: str) -> Optional[ProviderProduct]:
+        """
+        Product details fields:
+          asin, product_title, product_price, product_original_price,
+          currency, product_availability, product_photo, product_photos,
+          product_url, product_information, about_product, product_details,
+          product_star_rating, product_num_ratings, product_num_offers,
+          product_minimum_offer_price, is_best_seller, is_amazon_choice,
+          is_prime, has_variations, product_variations
+        """
+        title = data.get("product_title", "Unknown Product")
+        selling_price = _parse_price(data.get("product_price"))
+        mrp = _parse_price(data.get("product_original_price"))
+
+        # Extract brand from product_information or about_product
+        brand = self._extract_brand(data)
+
+        # Best image
+        image = (
+            data.get("product_photo")
+            or (data.get("product_photos") or [None])[0]
         )
+        url = data.get("product_url") or f"https://www.amazon.in/dp/{asin}"
 
-        mrp = _extract_price(
-            item.get("product_original_price")
-            or item.get("original_price")
-            or item.get("listPrice")
-            or item.get("mrp")
-        )
+        availability_text = data.get("product_availability", "In Stock")
+        availability = "out of stock" not in str(availability_text).lower()
 
-        image_url = (
-            item.get("product_photo")
-            or item.get("image")
-            or item.get("main_image", {}).get("link")
-            or (item.get("product_photos") or [None])[0]
-        )
-
-        url = (
-            item.get("product_url")
-            or item.get("url")
-            or (f"https://www.amazon.in/dp/{asin}" if asin else None)
-        )
-
-        brand = (
-            item.get("product_brand")
-            or item.get("brand")
-            or item.get("brandName")
-        )
-
-        availability_raw = item.get("product_availability") or item.get("availability") or ""
-        availability = "out" not in str(availability_raw).lower()
-
-        # Parse offers if embedded
-        raw_offers = item.get("product_information", {}).get("offers", [])
-        offers = self._parse_offers_from_list(raw_offers)
-
-        effective_price = self._compute_effective_price(selling_price, offers)
+        min_offer = _parse_price(data.get("product_minimum_offer_price"))
+        effective = min_offer if (min_offer and selling_price and min_offer < selling_price) \
+            else selling_price
 
         return ProviderProduct(
             marketplace="amazon",
@@ -205,86 +248,104 @@ class RapidAPIAmazonProvider(MarketplaceProvider):
             title=title,
             url=url,
             brand=brand,
-            image_url=image_url,
+            variant=self._extract_variant(data),
+            image_url=image,
             mrp=mrp,
             selling_price=selling_price,
-            effective_price=effective_price,
+            effective_price=effective,
             currency="INR",
             availability=availability,
-            offers=offers,
+            offers=[],  # call get_current_offers separately
             observed_at=datetime.now(timezone.utc),
-            source=f"rapidapi:{self._host}",
+            source="real-time-amazon-data/product-details",
             confidence=1.0,
         )
 
-    def _parse_offers(self, data: dict) -> List[ProviderOffer]:
-        items = (
-            data.get("offers")
-            or data.get("data", {}).get("offers")
-            or []
-        )
-        return self._parse_offers_from_list(items)
+    def _parse_offers(self, raw_offers: list) -> List[ProviderOffer]:
+        """
+        Offer structure from /product-offers:
+          offer_id, condition, seller_info.seller_name,
+          price_info.price / price_info.raw_price / price_info.currency,
+          is_buybox_winner, is_prime, delivery_info
+        """
+        result: List[ProviderOffer] = []
+        for o in raw_offers:
+            price_info = o.get("price_info", {})
+            seller_info = o.get("seller_info", {})
+            seller_name = seller_info.get("seller_name", "")
 
-    def _parse_offers_from_list(self, items: list) -> List[ProviderOffer]:
-        offers: List[ProviderOffer] = []
-        for o in items:
-            if not isinstance(o, dict):
-                continue
-            title = o.get("title") or o.get("description") or o.get("type", "Offer")
-            discount_value = _extract_price(o.get("discount") or o.get("discountAmount"))
-            discount_pct = _extract_float(o.get("discountPercentage") or o.get("discount_percentage"))
-
-            # Detect bank/card offers (conditional)
-            is_conditional = any(
-                kw in str(title).lower()
-                for kw in ("hdfc", "sbi", "icici", "axis", "kotak", "card", "bank", "emi", "exchange")
+            price = (
+                _parse_price(price_info.get("raw_price"))
+                or price_info.get("price")
             )
+            if not price:
+                continue
 
-            offers.append(ProviderOffer(
-                offer_type="bank" if is_conditional else "coupon",
-                title=title,
-                discount_value=discount_value,
-                discount_percentage=discount_pct,
-                coupon_code=o.get("couponCode") or o.get("code"),
-                eligibility=o.get("eligibility") or o.get("terms"),
-                is_conditional=is_conditional,
-                source=f"rapidapi:{self._host}",
+            result.append(ProviderOffer(
+                offer_type="seller",
+                title=f"Sold by {seller_name}" if seller_name else "Marketplace offer",
+                discount_value=None,
+                is_conditional=False,
+                source="real-time-amazon-data/product-offers",
             ))
-        return offers
+        return result
 
-    def _compute_effective_price(
-        self, base: Optional[float], offers: List[ProviderOffer]
-    ) -> Optional[float]:
-        if base is None:
-            return None
-        effective = base
-        for o in offers:
-            if not o.is_conditional and o.offer_type == "coupon" and o.discount_value:
-                effective -= o.discount_value
-        return round(max(effective, 0), 2)
+    # ── Field extraction helpers ─────────────────────────────────────────────
+
+    def _extract_brand(self, data: dict) -> Optional[str]:
+        """Try product_information.brand or product_details.Brand."""
+        info = data.get("product_information", {})
+        if isinstance(info, dict):
+            brand = info.get("brand") or info.get("Brand") or info.get("manufacturer")
+            if brand:
+                return str(brand).strip()
+        details = data.get("product_details", {})
+        if isinstance(details, dict):
+            brand = details.get("Brand") or details.get("brand")
+            if brand:
+                return str(brand).strip()
+        return None
+
+    def _extract_variant(self, data: dict) -> Optional[str]:
+        """Try to extract variant string from product variations or title."""
+        variations = data.get("product_variations", {})
+        if isinstance(variations, dict):
+            parts = []
+            for key, val in variations.items():
+                if isinstance(val, str):
+                    parts.append(val)
+                elif isinstance(val, dict):
+                    selected = val.get("selected") or val.get("value")
+                    if selected:
+                        parts.append(str(selected))
+            if parts:
+                return " / ".join(parts)
+        return None
 
 
-# ── Utility helpers ──────────────────────────────────────────────────────────
+# ── Standalone helpers ────────────────────────────────────────────────────────
 
-def _extract_price(raw) -> Optional[float]:
-    """Parse ₹69,999 / '69999' / 69999.0 / None → float or None."""
+def _parse_price(raw) -> Optional[float]:
+    """
+    Normalise any price representation to a float in INR.
+    Handles: '₹69,999', '69999.0', 69999, None, '$0'
+    """
     if raw is None:
         return None
     if isinstance(raw, (int, float)):
-        return round(float(raw), 2) if raw > 0 else None
-    s = str(raw).replace("₹", "").replace(",", "").replace(" ", "").strip()
-    s = re.sub(r"[^\d.]", "", s)
+        return round(float(raw), 2) if float(raw) > 0 else None
+    # Strip currency symbols, commas, spaces
+    cleaned = re.sub(r"[₹$£€,\s]", "", str(raw)).strip()
+    # Keep only digits and decimal point
+    cleaned = re.sub(r"[^\d.]", "", cleaned)
     try:
-        val = float(s)
+        val = float(cleaned)
         return round(val, 2) if val > 0 else None
     except ValueError:
         return None
 
 
-def _extract_float(raw) -> Optional[float]:
-    if raw is None:
-        return None
-    try:
-        return float(str(raw).replace("%", "").strip())
-    except ValueError:
-        return None
+def _extract_asin_from_url(url: str) -> Optional[str]:
+    """Extract B0XXXXXXXXXX ASIN from any Amazon URL format."""
+    match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", url)
+    return match.group(1) if match else None
